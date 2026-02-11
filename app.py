@@ -10,9 +10,13 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
+# --- CONFIGURATION ---
+FREE_PAGE_LIMIT = 10  # Change this number anytime to adjust your generosity!
+# ---------------------
+
 @app.route('/')
 def home():
-    return "The Kitchen is Open - Stable Sort Edition!"
+    return "The Kitchen is Open - 10 Page Limit Edition!"
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
@@ -31,6 +35,15 @@ def convert_pdf():
     file.save(pdf_path)
 
     try:
+        # --- THE BOUNCER (Page Limit Check) ---
+        with pdfplumber.open(pdf_path) as pdf:
+            total_pages = len(pdf.pages)
+            if total_pages > FREE_PAGE_LIMIT:
+                return jsonify({
+                    'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta {FREE_PAGE_LIMIT} páginas. Por favor, sube un archivo más pequeño.'
+                }), 400
+        # --------------------------------------
+
         all_transactions = []
         
         # Default years
@@ -60,7 +73,6 @@ def convert_pdf():
                         start_month = 1
             
             # Step 2: Extract Data
-            # We track 'original_index' to ensure we can restore the exact PDF order later
             original_index = 0
             
             for page in pdf.pages:
@@ -76,7 +88,6 @@ def convert_pdf():
                             raw_date = date_match.group(1)
                             month = int(raw_date.split('/')[0])
                             
-                            # Smart Year Logic
                             if start_month >= 10 and month < 6:
                                 assigned_year = end_year
                             else:
@@ -115,7 +126,7 @@ def convert_pdf():
                                         "Date": full_date,
                                         "Description": description,
                                         "Amount": float(clean_amount),
-                                        "OriginalOrder": original_index # Keep track of position
+                                        "OriginalOrder": original_index
                                     })
                                     original_index += 1
 
@@ -123,15 +134,8 @@ def convert_pdf():
             return jsonify({'error': 'No transactions found.'}), 400
 
         df = pd.DataFrame(all_transactions)
-        
-        # Create a real Date Object for sorting
         df['DateObj'] = pd.to_datetime(df['Date'], format='%m/%d/%Y')
-        
-        # STABLE SORT: Sort by Date first, but use 'OriginalOrder' to break ties
-        # This keeps same-day transactions in the order they appeared on paper
         df = df.sort_values(by=['DateObj', 'OriginalOrder'], ascending=True)
-        
-        # Clean up helper columns
         df = df.drop(columns=['DateObj', 'OriginalOrder'])
         
         df.to_excel(excel_path, index=False)
