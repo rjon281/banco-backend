@@ -11,7 +11,7 @@ CORS(app)
 
 @app.route('/')
 def home():
-    return "The Kitchen is Open - Advanced PNC Edition!"
+    return "The Kitchen is Open - Date Filter Edition!"
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
@@ -30,56 +30,40 @@ def convert_pdf():
     file.save(pdf_path)
 
     try:
-        all_data = []
+        all_transactions = []
+        
+        # Regex pattern for dates like 12/18, 01/05, 12/18/2025
+        # It looks for: 1 or 2 digits, a slash, 1 or 2 digits
+        date_pattern = re.compile(r'^\d{1,2}/\d{1,2}')
+
         with pdfplumber.open(pdf_path) as pdf:
-            for i, page in enumerate(pdf.pages):
-                # STRATEGY 1: Look for explicit grid lines (Standard)
-                tables = page.extract_tables({
-                    "vertical_strategy": "lines", 
-                    "horizontal_strategy": "lines"
-                })
+            for page in pdf.pages:
+                # Extract text using a layout-preserving method
+                text = page.extract_text()
                 
-                # STRATEGY 2: If that fails, look for "Text Columns" (PNC Style)
-                if not tables:
-                    tables = page.extract_tables({
-                        "vertical_strategy": "text", 
-                        "horizontal_strategy": "text",
-                        "snap_tolerance": 4,
-                    })
+                if text:
+                    for line in text.split('\n'):
+                        # Check if the line STARTS with a date
+                        if date_pattern.match(line):
+                            # It's a transaction! 
+                            # Split the line by large spaces (2 or more spaces) to separate columns
+                            parts = re.split(r'\s{2,}', line)
+                            all_transactions.append(parts)
 
-                # Process whatever tables we found
-                if tables:
-                    for table in tables:
-                        for row in table:
-                            # Clean up the row data
-                            clean_row = [str(cell).strip() if cell else '' for cell in row]
-                            # Only keep rows that look like transactions (have a date or amount)
-                            if any(clean_row): 
-                                all_data.append(clean_row)
-                
-                # STRATEGY 3: Emergency Text Extraction (If tables fail completely)
-                else:
-                    text = page.extract_text()
-                    if text:
-                        for line in text.split('\n'):
-                            # Simple logic: split by large spaces
-                            parts = re.split(r'\s{3,}', line) 
-                            if len(parts) > 1:
-                                all_data.append(parts)
+        if not all_transactions:
+            return jsonify({'error': 'No transactions found. Does your statement have dates like MM/DD?'}), 400
 
-        if not all_data:
-            return jsonify({'error': 'Could not extract any data. The PDF might be encrypted or have a unique layout.'}), 400
-
-        # Create DataFrame and clean it
-        df = pd.DataFrame(all_data)
+        # Create DataFrame
+        # We don't know the exact column names, so we let pandas guess or leave them blank
+        df = pd.DataFrame(all_transactions)
         
         # Save to Excel
-        df.to_excel(excel_path, index=False, header=False)
+        df.to_excel(excel_path, index=False, header=["Date", "Description/Data", "Amount", "Balance", "Misc"][:len(df.columns)])
 
         return send_file(excel_path, as_attachment=True, download_name=excel_filename)
 
     except Exception as e:
-        print(f"ERROR: {str(e)}") # Print to Render logs for debugging
+        print(f"ERROR: {str(e)}")
         return jsonify({'error': f'Server Error: {str(e)}'}), 500
     finally:
         if os.path.exists(pdf_path): os.remove(pdf_path)
