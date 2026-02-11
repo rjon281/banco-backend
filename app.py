@@ -12,7 +12,7 @@ CORS(app)
 
 @app.route('/')
 def home():
-    return "The Kitchen is Open - Universal Import Edition!"
+    return "The Kitchen is Open - Smart Column Edition!"
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
@@ -34,56 +34,64 @@ def convert_pdf():
         all_transactions = []
         found_year = None
         
-        # Regex to find a year (looks for 2024, 2025, 2026, etc.)
+        # Regex to find the Year (2025, 2026, etc.)
         year_pattern = re.compile(r'\b(202[0-9])\b')
         
-        # Regex to find the Date at the START of a line (MM/DD)
+        # Regex to find Date at start of line (e.g., 12/18 or 01/05)
         date_start_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
         
-        # Regex to find the Amount at the END of a line
-        # Looks for numbers with a decimal, possibly a minus sign or 'CR' at the end
-        # Examples: 25.17, 1,000.00, -50.00, 25.17-
-        amount_end_pattern = re.compile(r'(-?[\d,]+\.\d{2}[-]?)\s*$')
+        # Regex to find ANY money amount in the line (e.g., 1,200.50 or -50.00)
+        # Handles commas, negatives at start/end
+        money_pattern = re.compile(r'(-?[\d,]+\.\d{2}[-]?)')
 
         with pdfplumber.open(pdf_path) as pdf:
-            # Step 1: Find the Year from the first page
+            # Step 1: Find the Year
             if len(pdf.pages) > 0:
                 first_page_text = pdf.pages[0].extract_text()
                 year_match = year_pattern.search(first_page_text)
                 if year_match:
                     found_year = year_match.group(1)
             
-            # Use current year if we couldn't find one
             if not found_year:
                 found_year = str(datetime.now().year)
 
-            # Step 2: Extract Transactions
+            # Step 2: Extract Data
             for page in pdf.pages:
                 text = page.extract_text()
                 if text:
                     for line in text.split('\n'):
-                        # Does line start with a date?
+                        # Check if line looks like a transaction row
                         date_match = date_start_pattern.search(line)
                         
                         if date_match:
                             raw_date = date_match.group(1)
                             
-                            # Does line end with an amount?
-                            amount_match = amount_end_pattern.search(line)
+                            # Find ALL money numbers in this line
+                            money_matches = list(money_pattern.finditer(line))
                             
-                            if amount_match:
-                                raw_amount = amount_match.group(1)
+                            if money_matches:
+                                # LOGIC: 
+                                # If we have 2+ numbers, the LAST one is usually the 'Balance'.
+                                # The one BEFORE the last is the 'Transaction Amount'.
+                                if len(money_matches) >= 2:
+                                    target_match = money_matches[-2] 
+                                else:
+                                    # If only 1 number, that must be the amount
+                                    target_match = money_matches[0]
                                 
-                                # The Description is everything IN BETWEEN the Date and the Amount
-                                # We slice the string using the lengths of the matches
-                                description = line[date_match.end():amount_match.start()].strip()
+                                raw_amount = target_match.group(1)
                                 
-                                # Clean up the amount (remove commas, handle trailing negatives)
+                                # Extract Description: Text between Date and the Chosen Amount
+                                description_start = date_match.end()
+                                description_end = target_match.start()
+                                description = line[description_start:description_end].strip()
+                                
+                                # Clean Amount
                                 clean_amount = raw_amount.replace(',', '')
                                 if clean_amount.endswith('-'):
                                     clean_amount = '-' + clean_amount[:-1]
                                 
-                                # Format Date with Year
+                                # Format Date
                                 full_date = f"{raw_date}/{found_year}"
 
                                 all_transactions.append({
@@ -93,9 +101,9 @@ def convert_pdf():
                                 })
 
         if not all_transactions:
-            return jsonify({'error': 'No transactions found. Try downloading a fresh PDF from the bank.'}), 400
+            return jsonify({'error': 'No transactions found. Please ensure the PDF is a text-based bank statement.'}), 400
 
-        # Create DataFrame with the 3 Universal Columns
+        # Create Clean DataFrame
         df = pd.DataFrame(all_transactions)
         
         # Save to Excel
