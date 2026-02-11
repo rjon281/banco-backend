@@ -16,7 +16,7 @@ FREE_PAGE_LIMIT = 10  # Change this number anytime to adjust your generosity!
 
 @app.route('/')
 def home():
-    return "The Kitchen is Open - 10 Page Limit Edition!"
+    return "The Kitchen is Open - 15 Page Limit Edition!"
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
