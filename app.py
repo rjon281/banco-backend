@@ -12,7 +12,7 @@ CORS(app)
 
 @app.route('/')
 def home():
-    return "The Kitchen is Open - Smart Column Edition!"
+    return "The Kitchen is Open - Hybrid Layout Edition!"
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
@@ -34,14 +34,13 @@ def convert_pdf():
         all_transactions = []
         found_year = None
         
-        # Regex to find the Year (2025, 2026, etc.)
+        # Regex to find the Year
         year_pattern = re.compile(r'\b(202[0-9])\b')
         
-        # Regex to find Date at start of line (e.g., 12/18 or 01/05)
+        # Regex to find Date at start (e.g., 12/18)
         date_start_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
         
-        # Regex to find ANY money amount in the line (e.g., 1,200.50 or -50.00)
-        # Handles commas, negatives at start/end
+        # Regex to find Money (e.g., 1,200.50 or -50.00)
         money_pattern = re.compile(r'(-?[\d,]+\.\d{2}[-]?)')
 
         with pdfplumber.open(pdf_path) as pdf:
@@ -55,58 +54,61 @@ def convert_pdf():
             if not found_year:
                 found_year = str(datetime.now().year)
 
-            # Step 2: Extract Data
+            # Step 2: Extract Transactions
             for page in pdf.pages:
                 text = page.extract_text()
                 if text:
                     for line in text.split('\n'):
-                        # Check if line looks like a transaction row
                         date_match = date_start_pattern.search(line)
                         
                         if date_match:
                             raw_date = date_match.group(1)
-                            
-                            # Find ALL money numbers in this line
                             money_matches = list(money_pattern.finditer(line))
                             
                             if money_matches:
-                                # LOGIC: 
-                                # If we have 2+ numbers, the LAST one is usually the 'Balance'.
-                                # The one BEFORE the last is the 'Transaction Amount'.
-                                if len(money_matches) >= 2:
-                                    target_match = money_matches[-2] 
+                                # HYBRID LOGIC: Check where the FIRST money amount is
+                                first_money = money_matches[0]
+                                date_end_index = date_match.end()
+                                money_start_index = first_money.start()
+                                
+                                # If money starts within 10 characters of the date, 
+                                # Assume Format: Date -> Amount -> Description
+                                if money_start_index - date_end_index < 10:
+                                    target_match = first_money
+                                    raw_amount = target_match.group(1)
+                                    # Description is everything AFTER the amount
+                                    description = line[target_match.end():].strip()
+                                
+                                # Otherwise, Assume Format: Date -> Description -> Amount
                                 else:
-                                    # If only 1 number, that must be the amount
-                                    target_match = money_matches[0]
+                                    # Pick the amount (handling the Balance column logic from before)
+                                    if len(money_matches) >= 2:
+                                        target_match = money_matches[-2]
+                                    else:
+                                        target_match = money_matches[0]
+                                    
+                                    raw_amount = target_match.group(1)
+                                    # Description is everything BETWEEN Date and Amount
+                                    description = line[date_end_index:target_match.start()].strip()
                                 
-                                raw_amount = target_match.group(1)
-                                
-                                # Extract Description: Text between Date and the Chosen Amount
-                                description_start = date_match.end()
-                                description_end = target_match.start()
-                                description = line[description_start:description_end].strip()
-                                
-                                # Clean Amount
-                                clean_amount = raw_amount.replace(',', '')
-                                if clean_amount.endswith('-'):
-                                    clean_amount = '-' + clean_amount[:-1]
-                                
-                                # Format Date
-                                full_date = f"{raw_date}/{found_year}"
+                                # Clean & Save
+                                if description: # Filter out empty lines (like Balance summaries)
+                                    clean_amount = raw_amount.replace(',', '')
+                                    if clean_amount.endswith('-'):
+                                        clean_amount = '-' + clean_amount[:-1]
+                                    
+                                    full_date = f"{raw_date}/{found_year}"
 
-                                all_transactions.append({
-                                    "Date": full_date,
-                                    "Description": description,
-                                    "Amount": float(clean_amount)
-                                })
+                                    all_transactions.append({
+                                        "Date": full_date,
+                                        "Description": description,
+                                        "Amount": float(clean_amount)
+                                    })
 
         if not all_transactions:
-            return jsonify({'error': 'No transactions found. Please ensure the PDF is a text-based bank statement.'}), 400
+            return jsonify({'error': 'No transactions found. Layout might be unique.'}), 400
 
-        # Create Clean DataFrame
         df = pd.DataFrame(all_transactions)
-        
-        # Save to Excel
         df.to_excel(excel_path, index=False)
 
         return send_file(excel_path, as_attachment=True, download_name=excel_filename)
