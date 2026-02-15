@@ -14,6 +14,17 @@ CORS(app)
 FREE_PAGE_LIMIT = 10  # Change this number anytime to adjust your generosity!
 # ---------------------
 
+# --- BACKEND TRACKER ---
+def log_successful_conversion(filename):
+    try:
+        # This creates or appends to a log file right in your main folder
+        with open("conversions_log.txt", "a", encoding="utf-8") as f:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{timestamp}] SUCCESS: Converted '{filename}' to Excel.\n")
+    except Exception as e:
+        print(f"Logging failed: {e}")
+# -----------------------
+
 @app.route('/')
 def home():
     return "The Kitchen is Open - 15 Page Limit Edition!"
@@ -139,6 +150,10 @@ def convert_pdf():
         df = df.drop(columns=['DateObj', 'OriginalOrder'])
         
         df.to_excel(excel_path, index=False)
+
+        # --- TRIGGER THE TRACKER ---
+        # The file was successfully created, so we log it right before sending it back!
+        log_successful_conversion(file.filename)
 
         return send_file(excel_path, as_attachment=True, download_name=excel_filename)
 
