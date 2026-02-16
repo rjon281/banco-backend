@@ -11,7 +11,7 @@ app = Flask(__name__)
 CORS(app)
 
 # --- CONFIGURATION ---
-FREE_PAGE_LIMIT = 10 
+FREE_PAGE_LIMIT = 15 
 ALLOWED_EXTENSIONS = {'pdf', 'csv', 'xls', 'xlsx'}
 # ---------------------
 
