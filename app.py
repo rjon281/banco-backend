@@ -33,24 +33,39 @@ def smart_clean_vendor(text):
         return text
     
     desc = text.upper()
-    # Remove common bank filler words
-    prefixes = [r'\bCOMPRA\b', r'\bTARJETA\b', r'\bDEBITO\b', r'\bSPEI\b', r'\bTRANSFERENCIA\b', 
-                r'\bPAGO\b', r'\bCAJERO\b', r'\bRETIRO\b', r'\bDEPOSITO\b', r'\bMOVIMIENTO\b']
+    
+    # Remove common bank filler words (Bilingual: English & Spanish)
+    prefixes = [
+        # Spanish
+        r'\bCOMPRA\b', r'\bTARJETA\b', r'\bDEBITO\b', r'\bSPEI\b', r'\bTRANSFERENCIA\b', 
+        r'\bPAGO\b', r'\bCAJERO\b', r'\bRETIRO\b', r'\bDEPOSITO\b', r'\bMOVIMIENTO\b',
+        # English
+        r'\bRECURRING DEBIT CARD\b', r'\bDEBIT CARD PURCHASE\b', r'\bPOS PURCHASE\b', 
+        r'\bDEBIT CARD\b', r'\bDEBITCARD\b', r'\bCREDIT\b', r'\bACH TEL UTL\b', 
+        r'\bACH\b', r'\bWEB PMT- INST XFER\b', r'\bWEB PMT\b', r'\bINST XFER\b', 
+        r'\bONLINE TRANSFER TO\b', r'\bPURCHASE\b', r'\bTOTALING\b'
+    ]
     for p in prefixes:
         desc = re.sub(p, '', desc)
     
-    # Remove card numbers (e.g., *1234, xxxx-1234)
+    # Remove card numbers, store numbers, and dates (e.g., *1234, xxxx-1234, #4187)
     desc = re.sub(r'[*#xX-]*\d{4,}\b', '', desc)
+    
     # Remove long reference numbers (5 or more digits)
     desc = re.sub(r'\b\d{5,}\b', '', desc)
-    # Clean up extra spaces
+    
+    # Remove stray dollar amounts sometimes stuck in descriptions (e.g., "TOTALING $1,683.86")
+    desc = re.sub(r'\$?[0-9,]+\.\d{2}\.?', '', desc)
+    
+    # Clean up extra spaces and trailing punctuation
+    desc = re.sub(r'^[-\s,.]+|[-\s,.]+$', '', desc) # Remove leading/trailing dashes, commas, periods
     desc = re.sub(r'\s+', ' ', desc).strip()
     
     return desc if desc else "DESCONOCIDO / UNKNOWN"
 
 @app.route('/')
 def home():
-    return "The Kitchen is Open - Global Edition with CSV Support!"
+    return "The Kitchen is Open - Global Edition with CSV Support & Bilingual Cleaning!"
 
 @app.route('/convert', methods=['POST'])
 def convert_file():
@@ -105,7 +120,7 @@ def convert_file():
                 total_pages = len(pdf.pages)
                 if total_pages > FREE_PAGE_LIMIT:
                     return jsonify({
-                        'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta 15 páginas por archivo. / The file has {total_pages} pages. The free plan allows up to 15 pages per file.'
+                        'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta {FREE_PAGE_LIMIT} páginas por archivo. / The file has {total_pages} pages. The free plan allows up to {FREE_PAGE_LIMIT} pages per file.'
                     }), 400
 
                 # Extract text for Auto-Detection
