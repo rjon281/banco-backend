@@ -105,7 +105,7 @@ def convert_file():
                 total_pages = len(pdf.pages)
                 if total_pages > FREE_PAGE_LIMIT:
                     return jsonify({
-                        'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta {FREE_PAGE_LIMIT}. / File exceeds free limit.'
+                        'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta 15 páginas por archivo. / The file has {total_pages} pages. The free plan allows up to 15 pages per file.'
                     }), 400
 
                 # Extract text for Auto-Detection
