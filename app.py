@@ -70,11 +70,11 @@ def home():
 @app.route('/convert', methods=['POST'])
 def convert_file():
     if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
+        return jsonify({'error': 'No se detectó ningún archivo en la petición. / No file detected in the request.'}), 400
     
     file = request.files['file']
     if file.filename == '' or not allowed_file(file.filename):
-        return jsonify({'error': 'No selected file or unsupported format. Please upload PDF, CSV, or Excel.'}), 400
+        return jsonify({'error': 'Formato no compatible. Por favor sube un PDF, CSV o Excel. / Unsupported format. Please upload a PDF, CSV, or Excel file.'}), 400
 
     temp_dir = tempfile.gettempdir()
     file_ext = file.filename.rsplit('.', 1)[1].lower()
@@ -120,7 +120,7 @@ def convert_file():
                 total_pages = len(pdf.pages)
                 if total_pages > FREE_PAGE_LIMIT:
                     return jsonify({
-                        'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta {FREE_PAGE_LIMIT} páginas por archivo. / The file has {total_pages} pages. The free plan allows up to {FREE_PAGE_LIMIT} pages per file.'
+                        'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta {FREE_PAGE_LIMIT} páginas por archivo. / ⚠️ The file has {total_pages} pages. The free plan allows up to {FREE_PAGE_LIMIT} pages per file.'
                     }), 400
 
                 # Extract text for Auto-Detection
@@ -247,7 +247,7 @@ def convert_file():
                                         original_index += 1
 
                 if not all_transactions:
-                    return jsonify({'error': 'No transactions found.'}), 400
+                    return jsonify({'error': 'No se encontraron transacciones legibles. Verifica que sea un estado de cuenta bancario válido. / No readable transactions found. Ensure it is a valid bank statement.'}), 400
 
                 df = pd.DataFrame(all_transactions)
                 df['DateObj'] = pd.to_datetime(df['DateForSorting'], dayfirst=is_spanish, errors='coerce')
@@ -260,6 +260,6 @@ def convert_file():
 
     except Exception as e:
         print(f"ERROR: {str(e)}")
-        return jsonify({'error': f'Server Error: {str(e)}'}), 500
+        return jsonify({'error': 'Error interno del servidor. Por favor verifica tu archivo e intenta de nuevo. / Internal Server Error. Please check your file and try again.'}), 500
     finally:
         if os.path.exists(input_path): os.remove(input_path)
