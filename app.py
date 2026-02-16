@@ -11,13 +11,12 @@ app = Flask(__name__)
 CORS(app)
 
 # --- CONFIGURATION ---
-FREE_PAGE_LIMIT = 10  # Change this number anytime to adjust your generosity!
+FREE_PAGE_LIMIT = 10 
 # ---------------------
 
 # --- BACKEND TRACKER ---
 def log_successful_conversion(filename):
     try:
-        # This creates or appends to a log file right in your main folder
         with open("conversions_log.txt", "a", encoding="utf-8") as f:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             f.write(f"[{timestamp}] SUCCESS: Converted '{filename}' to Excel.\n")
@@ -27,7 +26,7 @@ def log_successful_conversion(filename):
 
 @app.route('/')
 def home():
-    return "The Kitchen is Open - 15 Page Limit Edition!"
+    return "The Kitchen is Open - LATAM Edition!"
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
@@ -57,17 +56,16 @@ def convert_pdf():
 
         all_transactions = []
         
-        # Default years
         start_year = datetime.now().year - 1
         end_year = datetime.now().year
         
-        # Regex patterns
         period_pattern = re.compile(r'period\s+(\d{1,2}/\d{1,2}/(\d{4}))\s+to\s+(\d{1,2}/\d{1,2}/(\d{4}))', re.IGNORECASE)
         date_start_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
-        money_pattern = re.compile(r'(-?[\d,]+\.\d{2}[-]?)')
+        
+        # UPGRADE 1: Broadened regex to catch spaces, commas, and periods in LATAM numbers
+        money_pattern = re.compile(r'(-?(?:\d{1,3}(?:[.,\s]\d{3})*|\d+)[.,]\d{2}[-]?)')
 
         with pdfplumber.open(pdf_path) as pdf:
-            # Step 1: Detect Period
             if len(pdf.pages) > 0:
                 first_page_text = pdf.pages[0].extract_text()
                 period_match = period_pattern.search(first_page_text)
@@ -83,21 +81,27 @@ def convert_pdf():
                         end_year = start_year + 1
                         start_month = 1
             
-            # Step 2: Extract Data
             original_index = 0
             
             for page in pdf.pages:
                 text = page.extract_text()
                 if text:
                     for line in text.split('\n'):
-                        if "Daily Balance" in line or "Balance Detail" in line:
+                        if "Daily Balance" in line or "Balance Detail" in line or "Saldo" in line:
                             continue
 
                         date_match = date_start_pattern.search(line)
                         
                         if date_match:
                             raw_date = date_match.group(1)
-                            month = int(raw_date.split('/')[0])
+                            
+                            # UPGRADE 2: Smart Date Handling (Assuming DD/MM for LATAM by default)
+                            date_parts = raw_date.split('/')
+                            # Failsafe: if the first part is > 12, it must be the day (DD/MM)
+                            if int(date_parts[0]) > 12:
+                                month = int(date_parts[1]) 
+                            else:
+                                month = int(date_parts[0]) # Fallback
                             
                             if start_month >= 10 and month < 6:
                                 assigned_year = end_year
@@ -127,17 +131,32 @@ def convert_pdf():
                                 is_balance_row = re.search(r'\d{2}/\d{2}', description)
                                 
                                 if description and not is_balance_row:
-                                    clean_amount = raw_amount.replace(',', '')
+                                    # UPGRADE 3: The LATAM Float Cleaner
+                                    clean_amount = raw_amount.replace(' ', '')
                                     if clean_amount.endswith('-'):
                                         clean_amount = '-' + clean_amount[:-1]
+                                    
+                                    # Detect if comma is the decimal separator (e.g., 1.000,50)
+                                    if clean_amount[-3] == ',':
+                                        clean_amount = clean_amount.replace('.', '').replace(',', '.')
+                                    else:
+                                        clean_amount = clean_amount.replace(',', '')
+                                    
+                                    amount_val = float(clean_amount)
+                                    
+                                    # UPGRADE 4: Split into Cargo and Abono
+                                    cargo = abs(amount_val) if amount_val < 0 else ""
+                                    abono = amount_val if amount_val > 0 else ""
                                     
                                     full_date = f"{raw_date}/{assigned_year}"
 
                                     all_transactions.append({
-                                        "Date": full_date,
-                                        "Description": description,
-                                        "Amount": float(clean_amount),
-                                        "OriginalOrder": original_index
+                                        "Fecha": full_date,
+                                        "Concepto": description,
+                                        "Cargo": cargo,
+                                        "Abono": abono,
+                                        "OriginalOrder": original_index,
+                                        "DateForSorting": full_date
                                     })
                                     original_index += 1
 
@@ -145,14 +164,16 @@ def convert_pdf():
             return jsonify({'error': 'No transactions found.'}), 400
 
         df = pd.DataFrame(all_transactions)
-        df['DateObj'] = pd.to_datetime(df['Date'], format='%m/%d/%Y')
+        
+        # Use dayfirst=True to properly sort LATAM DD/MM/YYYY dates
+        df['DateObj'] = pd.to_datetime(df['DateForSorting'], dayfirst=True, errors='coerce')
         df = df.sort_values(by=['DateObj', 'OriginalOrder'], ascending=True)
-        df = df.drop(columns=['DateObj', 'OriginalOrder'])
+        
+        # Clean up backend columns before exporting
+        df = df.drop(columns=['DateObj', 'OriginalOrder', 'DateForSorting'])
         
         df.to_excel(excel_path, index=False)
 
-        # --- TRIGGER THE TRACKER ---
-        # The file was successfully created, so we log it right before sending it back!
         log_successful_conversion(file.filename)
 
         return send_file(excel_path, as_attachment=True, download_name=excel_filename)
