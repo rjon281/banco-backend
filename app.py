@@ -14,7 +14,6 @@ CORS(app)
 FREE_PAGE_LIMIT = 10 
 # ---------------------
 
-# --- BACKEND TRACKER ---
 def log_successful_conversion(filename):
     try:
         with open("conversions_log.txt", "a", encoding="utf-8") as f:
@@ -22,11 +21,10 @@ def log_successful_conversion(filename):
             f.write(f"[{timestamp}] SUCCESS: Converted '{filename}' to Excel.\n")
     except Exception as e:
         print(f"Logging failed: {e}")
-# -----------------------
 
 @app.route('/')
 def home():
-    return "The Kitchen is Open - LATAM Edition!"
+    return "The Kitchen is Open - Global Edition!"
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
@@ -45,29 +43,49 @@ def convert_pdf():
     file.save(pdf_path)
 
     try:
-        # --- THE BOUNCER (Page Limit Check) ---
         with pdfplumber.open(pdf_path) as pdf:
             total_pages = len(pdf.pages)
             if total_pages > FREE_PAGE_LIMIT:
                 return jsonify({
-                    'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta {FREE_PAGE_LIMIT} páginas. Por favor, sube un archivo más pequeño.'
+                    'error': f'⚠️ El archivo tiene {total_pages} páginas. El plan gratuito permite hasta {FREE_PAGE_LIMIT}. / File exceeds free limit.'
                 }), 400
-        # --------------------------------------
 
-        all_transactions = []
-        
-        start_year = datetime.now().year - 1
-        end_year = datetime.now().year
-        
-        period_pattern = re.compile(r'period\s+(\d{1,2}/\d{1,2}/(\d{4}))\s+to\s+(\d{1,2}/\d{1,2}/(\d{4}))', re.IGNORECASE)
-        date_start_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
-        
-        # UPGRADE 1: Broadened regex to catch spaces, commas, and periods in LATAM numbers
-        money_pattern = re.compile(r'(-?(?:\d{1,3}(?:[.,\s]\d{3})*|\d+)[.,]\d{2}[-]?)')
+            # Step 0: Extract text for Auto-Detection
+            full_text = ""
+            for page in pdf.pages[:min(3, total_pages)]: # Check up to first 3 pages
+                extracted = page.extract_text()
+                if extracted:
+                    full_text += extracted + "\n"
+            
+            # --- AUTO-DETECT LANGUAGE (Headers) ---
+            text_lower = full_text.lower()
+            es_words = ['fecha', 'concepto', 'saldo', 'cargo', 'abono', 'retiro', 'depósito', 'movimiento']
+            en_words = ['date', 'description', 'balance', 'amount', 'withdrawal', 'deposit', 'summary']
+            
+            span_count = sum(text_lower.count(w) for w in es_words)
+            eng_count = sum(text_lower.count(w) for w in en_words)
+            is_spanish = span_count > eng_count
+            
+            # --- AUTO-DETECT DECIMAL FORMAT ---
+            dot_matches = len(re.findall(r'\.\d{2}(?:\s|$|-)', full_text))
+            comma_matches = len(re.findall(r',\d{2}(?:\s|$|-)', full_text))
+            is_comma_decimal = comma_matches > dot_matches
+            
+            if is_comma_decimal:
+                money_pattern = re.compile(r'(-?(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2}[-]?)')
+            else:
+                # Omit space as thousands separator to fix the PNC "Date merging" bug
+                money_pattern = re.compile(r'(-?(?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2}[-]?)')
 
-        with pdfplumber.open(pdf_path) as pdf:
+            period_pattern = re.compile(r'period\s+(\d{1,2}/\d{1,2}/(\d{4}))\s+to\s+(\d{1,2}/\d{1,2}/(\d{4}))', re.IGNORECASE)
+            date_start_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
+            
+            start_year = datetime.now().year - 1
+            end_year = datetime.now().year
+            start_month = 1
+
             if len(pdf.pages) > 0:
-                first_page_text = pdf.pages[0].extract_text()
+                first_page_text = full_text
                 period_match = period_pattern.search(first_page_text)
                 
                 if period_match:
@@ -79,8 +97,8 @@ def convert_pdf():
                     if year_match:
                         start_year = int(year_match.group(1))
                         end_year = start_year + 1
-                        start_month = 1
-            
+
+            all_transactions = []
             original_index = 0
             
             for page in pdf.pages:
@@ -91,17 +109,15 @@ def convert_pdf():
                             continue
 
                         date_match = date_start_pattern.search(line)
-                        
                         if date_match:
                             raw_date = date_match.group(1)
                             
-                            # UPGRADE 2: Smart Date Handling (Assuming DD/MM for LATAM by default)
+                            # Determine month dynamically
                             date_parts = raw_date.split('/')
-                            # Failsafe: if the first part is > 12, it must be the day (DD/MM)
                             if int(date_parts[0]) > 12:
                                 month = int(date_parts[1]) 
                             else:
-                                month = int(date_parts[0]) # Fallback
+                                month = int(date_parts[0])
                             
                             if start_month >= 10 and month < 6:
                                 assigned_year = end_year
@@ -131,33 +147,44 @@ def convert_pdf():
                                 is_balance_row = re.search(r'\d{2}/\d{2}', description)
                                 
                                 if description and not is_balance_row:
-                                    # UPGRADE 3: The LATAM Float Cleaner
                                     clean_amount = raw_amount.replace(' ', '')
                                     if clean_amount.endswith('-'):
                                         clean_amount = '-' + clean_amount[:-1]
                                     
-                                    # Detect if comma is the decimal separator (e.g., 1.000,50)
-                                    if clean_amount[-3] == ',':
+                                    # Normalize to python float string
+                                    if is_comma_decimal:
                                         clean_amount = clean_amount.replace('.', '').replace(',', '.')
                                     else:
                                         clean_amount = clean_amount.replace(',', '')
                                     
-                                    amount_val = float(clean_amount)
-                                    
-                                    # UPGRADE 4: Split into Cargo and Abono
-                                    cargo = abs(amount_val) if amount_val < 0 else ""
-                                    abono = amount_val if amount_val > 0 else ""
+                                    try:
+                                        amount_val = float(clean_amount)
+                                    except ValueError:
+                                        continue 
                                     
                                     full_date = f"{raw_date}/{assigned_year}"
-
-                                    all_transactions.append({
-                                        "Fecha": full_date,
-                                        "Concepto": description,
-                                        "Cargo": cargo,
-                                        "Abono": abono,
-                                        "OriginalOrder": original_index,
-                                        "DateForSorting": full_date
-                                    })
+                                    
+                                    # Output depending on the detected language
+                                    if is_spanish:
+                                        cargo = abs(amount_val) if amount_val < 0 else ""
+                                        abono = amount_val if amount_val > 0 else ""
+                                        all_transactions.append({
+                                            "Fecha": full_date,
+                                            "Concepto": description,
+                                            "Cargo": cargo,
+                                            "Abono": abono,
+                                            "OriginalOrder": original_index,
+                                            "DateForSorting": full_date
+                                        })
+                                    else:
+                                        all_transactions.append({
+                                            "Date": full_date,
+                                            "Description": description,
+                                            "Amount": amount_val,
+                                            "OriginalOrder": original_index,
+                                            "DateForSorting": full_date
+                                        })
+                                        
                                     original_index += 1
 
         if not all_transactions:
@@ -165,17 +192,15 @@ def convert_pdf():
 
         df = pd.DataFrame(all_transactions)
         
-        # Use dayfirst=True to properly sort LATAM DD/MM/YYYY dates
-        df['DateObj'] = pd.to_datetime(df['DateForSorting'], dayfirst=True, errors='coerce')
+        # Sort using dayfirst exclusively for Spanish
+        df['DateObj'] = pd.to_datetime(df['DateForSorting'], dayfirst=is_spanish, errors='coerce')
         df = df.sort_values(by=['DateObj', 'OriginalOrder'], ascending=True)
         
         # Clean up backend columns before exporting
         df = df.drop(columns=['DateObj', 'OriginalOrder', 'DateForSorting'])
         
         df.to_excel(excel_path, index=False)
-
         log_successful_conversion(file.filename)
-
         return send_file(excel_path, as_attachment=True, download_name=excel_filename)
 
     except Exception as e:
