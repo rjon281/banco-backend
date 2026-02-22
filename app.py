@@ -6,6 +6,9 @@ from flask_cors import CORS
 import tempfile
 import re
 from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 CORS(app)
@@ -263,3 +266,64 @@ def convert_file():
         return jsonify({'error': 'Error interno del servidor. Por favor verifica tu archivo e intenta de nuevo. / Internal Server Error. Please check your file and try again.'}), 500
     finally:
         if os.path.exists(input_path): os.remove(input_path)
+
+# ==========================================
+# EMAIL LEAD CAPTURE ROUTE
+# ==========================================
+@app.route('/email-results', methods=['POST'])
+def email_results():
+    data = request.json
+    user_email = data.get('email')
+    calculator_name = data.get('calculator', 'Calculadora Financiera')
+    results_data = data.get('data', {})
+
+    if not user_email:
+        return jsonify({'error': 'Falta el correo electrónico.'}), 400
+
+    # --- 1. BUILD THE HTML EMAIL CONTENT ---
+    html_content = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
+            <h2 style="color: #2563eb;">Tus Resultados: {calculator_name}</h2>
+            <p>Hola,</p>
+            <p>Gracias por usar BancoAXLS. Aquí tienes el resumen de tu cálculo:</p>
+            <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+    """
+    
+    # Loop through the math numbers and add them to the email
+    for key, value in results_data.items():
+        clean_key = key.replace('_', ' ')
+        html_content += f"<p><strong>{clean_key}:</strong> <span style='color: #15803d; font-size: 1.1em;'>{value}</span></p>"
+
+    html_content += """
+            </div>
+            <p>¿Necesitas ayuda para dar el siguiente paso financiero? <a href="https://bancoaxls.com" style="color: #2563eb; font-weight: bold;">Explora nuestras herramientas aquí.</a></p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+            <p style="font-size: 0.8em; color: #64748b; text-align: center;">© 2026 BancoAXLS. Todos los derechos reservados.</p>
+        </div>
+      </body>
+    </html>
+    """
+
+    # --- 2. PULL HOSTINGER CREDENTIALS FROM RENDER ENVIRONMENT ---
+    sender_email = os.environ.get('EMAIL_USER', 'soporte@bancoaxls.com')
+    sender_password = os.environ.get('EMAIL_PASS', 'YOUR_PASSWORD_HERE') 
+
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f"Tus Resultados de BancoAXLS - {calculator_name}"
+    msg['From'] = f"BancoAXLS Soporte <{sender_email}>"
+    msg['To'] = user_email
+    msg.attach(MIMEText(html_content, 'html'))
+
+    # --- 3. SEND THE EMAIL VIA HOSTINGER SMTP ---
+    try:
+        with smtplib.SMTP_SSL('smtp.hostinger.com', 465) as server:
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+            
+        return jsonify({'message': '¡Correo enviado exitosamente!'}), 200
+        
+    except Exception as e:
+        print(f"Error enviando correo: {str(e)}")
+        return jsonify({'error': 'Hubo un problema enviando el correo.'}), 500
