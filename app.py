@@ -316,9 +316,10 @@ def email_results():
     msg['To'] = user_email
     msg.attach(MIMEText(html_content, 'html'))
 
-    # --- 3. SEND THE EMAIL VIA HOSTINGER SMTP ---
+    # --- 3. SEND THE EMAIL VIA HOSTINGER SMTP (TLS on Port 587) ---
     try:
-        with smtplib.SMTP_SSL('smtp.hostinger.com', 465) as server:
+        with smtplib.SMTP('smtp.hostinger.com', 587) as server:
+            server.starttls() # Secure the connection
             server.login(sender_email, sender_password)
             server.send_message(msg)
             
